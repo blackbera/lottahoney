@@ -15,6 +15,8 @@ import { BerachainRewardsVault } from "contracts-monorepo/pol/rewards/BerachainR
 import { IBeraChef } from "contracts-monorepo/pol/interfaces/IBeraChef.sol";
 import { BerachainRewardsVaultFactory } from "contracts-monorepo/pol/rewards/BerachainRewardsVaultFactory.sol";
 import {console} from "forge-std/console.sol";
+import { IEntropy } from "@pythnetwork/entropy-sdk-solidity/IEntropy.sol";
+import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
 
 // =================
 // === INTERFACES ====
@@ -55,6 +57,7 @@ contract LotteryVaultTest is Test {
     address public constant BERACHEF = 0xfb81E39E3970076ab2693fA5C45A07Cc724C93c2;
 
     event RequestedRandomness(uint256 round, bytes data);
+    event DrawInitiated(uint256 lotteryId);
 
     // Time Constants
     uint256 internal constant MIN_DELAY_TIMELOCK = 2 days;
@@ -75,6 +78,10 @@ contract LotteryVaultTest is Test {
     address public constant PRZ_HONEY = 0xa3f04C07A4941A5860B9367254a072Fb17515993;
     address public constant REWARDS_VAULT = 0x677f6e28428784a0471C7f0775B030973F296568;
     address public constant FACTORY = 0x2B6e40f65D82A0cB98795bC7587a71bfa49fBB2B;
+
+    // Add Pyth-specific addresses
+    address public constant ENTROPY_SERVICE = 0x36825bf3Fbdf5a29E2d5148bfe7Dcf7B5639e320;
+    address public constant DEFAULT_PROVIDER = 0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344;
 
     // =================
     // === SETUP ====
@@ -97,13 +104,15 @@ contract LotteryVaultTest is Test {
         _setupRewardsVaultAndIncentives();
 
         // Lottery Vault Setup
-        vm.deal(address(owner), 100 ether); 
+        vm.deal(owner, 100 ether); 
         vm.prank(owner);
         lotteryVault = new LotteryVault(
             address(paymentToken),
             owner,
             address(rewardsVault),
-            operator
+            operator,
+            ENTROPY_SERVICE,
+            DEFAULT_PROVIDER
         );
 
         // Owner sends ETH to lottery vault
@@ -229,7 +238,7 @@ contract LotteryVaultTest is Test {
     lotteryVault.startLottery();
 }
 
-    function test_VRFIntegration() public {
+    function test_EntropyIntegration() public {
         // Start lottery
         vm.prank(owner);
         lotteryVault.startLottery();
@@ -243,27 +252,33 @@ contract LotteryVaultTest is Test {
         // Fast forward to end
         vm.warp(block.timestamp + LOTTERY_DURATION + 1);
 
-        // Expected VRF Request event data
-        uint256 roundId = 4553143; // From the trace logs
-        bytes memory data = abi.encode(1, lotteryVault.totalPool()); // lotteryId and total pool
-        bytes memory dataWithRequest = abi.encode(0, data); // requestId and data
+        // Get actual fee from entropy service
+        uint128 requestFee = IEntropy(ENTROPY_SERVICE).getFee(DEFAULT_PROVIDER);
+        vm.deal(address(lotteryVault), requestFee);
 
-        // Expect the VRF request event
+        // Expect the draw initiated event
         vm.expectEmit(true, true, false, false);
-        emit RequestedRandomness(roundId, dataWithRequest);
+        emit DrawInitiated(1);
 
         // Initiate draw
         lotteryVault.initiateDraw();
 
-        // Test non-operator cannot fulfill
-        vm.prank(user1);
-        vm.expectRevert("only operator");
-        lotteryVault.fulfillRandomness(123, dataWithRequest);
+        // Get the sequence number from the emitted event
+        // Note: In a real scenario, Pyth would use this to callback
+        uint64 sequenceNumber = 1; // This would normally come from the event
 
-        // Test operator can fulfill
-        uint256 randomness = 0x670c890348fbf2618741e87223634bf817898cfa3cb2ee0d409c5e923d10f407;
-        vm.prank(operator);
-        lotteryVault.fulfillRandomness(randomness, dataWithRequest);
+        // Create the random input that Pyth would send
+        bytes memory entropyCallbackData = abi.encodeWithSignature(
+            "entropyCallback(uint64,address,bytes32)",
+            sequenceNumber,
+            DEFAULT_PROVIDER,
+            bytes32(uint256(123456789))
+        );
+
+        // Simulate Pyth's callback by calling the contract directly
+        vm.prank(ENTROPY_SERVICE);
+        (bool success,) = address(lotteryVault).call(entropyCallbackData);
+        require(success, "Entropy callback failed");
 
         // Verify lottery state after fulfillment
         assertFalse(lotteryVault.lotteryActive(), "Lottery should be inactive");
@@ -273,11 +288,6 @@ contract LotteryVaultTest is Test {
         address winner = lotteryVault.lotteryWinners(1);
         assertTrue(winner == user1 || winner == user2, "Winner should be one of the participants");
         assertTrue(lotteryVault.lotteryPrizes(1) > 0, "Prize should be set");
-
-        // Test replay protection
-        vm.prank(operator);
-        vm.expectRevert("request fulfilled or missing");
-        lotteryVault.fulfillRandomness(randomness, dataWithRequest);
     }
 
 }

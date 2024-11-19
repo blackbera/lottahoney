@@ -19,6 +19,10 @@ contract LocalSetup is Script {
     address public constant TIMELOCK = 0xcB364028856f2328148Bb32f9D6E7a1F86451b1c;
     address public constant HONEY_WHALE = 0xCe67E15cbCb3486B29aD44486c5B5d32f361fdDc;
 
+    // Pyth Entropy Addresses
+    address public constant ENTROPY_SERVICE = 0x36825bf3Fbdf5a29E2d5148bfe7Dcf7B5639e320;
+    address public constant DEFAULT_PROVIDER = 0x6CC14824Ea2918f5De5C2f75A9Da968ad4BD6344;
+
     // Our contracts
     LotteryVault public lotteryVault;
     PrzHoney public przHoney;
@@ -65,20 +69,22 @@ contract LocalSetup is Script {
         // Start broadcast as owner for deployments and setup
         vm.startBroadcast(owner);
 
-        // Deploy LotteryVault
+        // Deploy LotteryVault with Pyth parameters
         lotteryVault = new LotteryVault(
             HONEY,
             owner,
             address(rewardsVault),
-            operator
+            operator,
+            ENTROPY_SERVICE,
+            DEFAULT_PROVIDER
         );
+
+        // Fund lottery vault with extra BERA for entropy fees
+        (bool success,) = address(lotteryVault).call{value: 20 ether}(""); // Increased from 10 to 20 ETH
+        require(success, "BERA transfer failed");
 
         // Setup PrzHoney ownership
         przHoney.transferOwnership(address(lotteryVault));
-
-        // Fund lottery vault with BERA for gas
-        (bool success,) = address(lotteryVault).call{value: 10 ether}("");
-        require(success, "BERA transfer failed");
 
         // Set PrzHoney in lottery vault
         lotteryVault.setPrzHoney(address(przHoney));
@@ -90,16 +96,17 @@ contract LocalSetup is Script {
         console.log("LotteryVault:", address(lotteryVault));
         console.log("PrzHoney:", address(przHoney));
         console.log("RewardsVault:", address(rewardsVault));
+        console.log("Entropy Service:", ENTROPY_SERVICE);
+        console.log("Default Provider:", DEFAULT_PROVIDER);
     }
 
     function run() public {
-        // Remove the setUp() call since Forge will run it automatically
-        
-        // Log the addresses clearly for manual copying
         console.log("\n=== Please copy these addresses to your .env file ===");
         console.log("LOTTERY_VAULT_ADDRESS=", address(lotteryVault));
         console.log("PRZ_HONEY_ADDRESS=", address(przHoney));
         console.log("REWARDS_VAULT_ADDRESS=", address(rewardsVault));
+        console.log("ENTROPY_ADDRESS=", ENTROPY_SERVICE);
+        console.log("PROVIDER_ADDRESS=", DEFAULT_PROVIDER);
         console.log("================================================\n");
     }
 }

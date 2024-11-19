@@ -5,7 +5,8 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { GelatoVRFConsumerBase } from "vrf-contracts/GelatoVRFConsumerBase.sol";
+import { IEntropy } from "@pythnetwork/entropy-sdk-solidity/IEntropy.sol";
+import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
 import { IBerachainRewardsVault } from "contracts-monorepo/pol/interfaces/IBerachainRewardsVault.sol";
 import { PrzHoney } from "./PrzHoney.sol";
 import {console} from "forge-std/console.sol";
@@ -22,7 +23,7 @@ contract LotteryReceiptToken is ERC20 {
     }
 }
 
-contract LotteryVault is GelatoVRFConsumerBase, Ownable {
+contract LotteryVault is IEntropyConsumer, Ownable {
     using SafeERC20 for IERC20;
 
     // Events
@@ -60,7 +61,6 @@ contract LotteryVault is GelatoVRFConsumerBase, Ownable {
     uint256 private constant WINNER_FEE = 300; // 3%
     uint256 private constant FEE_DENOMINATOR = 10000;
     uint256 private constant MIN_GAS_RESERVE = 1 ether; // Minimum ETH to keep for gas
-    address public immutable operator;
 
     // State variables
     IERC20 public paymentToken;
@@ -83,16 +83,23 @@ contract LotteryVault is GelatoVRFConsumerBase, Ownable {
     mapping(uint256 => bool) public prizesClaimed;
     mapping(address => uint256) public userReceiptTokenBalance;
 
+    // Pyth-specific state variables
+    IEntropy public entropy;
+    address public provider;
+    mapping(uint64 => uint256) public sequenceNumberToLotteryId;
+
     constructor(
         address _paymentToken,
         address _owner,
-        address _rewardVault, 
-        address _operatorAddress
-    ) GelatoVRFConsumerBase() Ownable(_owner) {
+        address _rewardVault,
+        address _entropy,
+        address _provider
+    ) Ownable(_owner) {
         paymentToken = IERC20(_paymentToken);
         rewardVault = IBerachainRewardsVault(_rewardVault);
         currentLotteryId = 1;
-        operator = _operatorAddress;
+        entropy = IEntropy(_entropy);
+        provider = _provider;
     }
 
     // Allow contract to receive ETH
@@ -191,44 +198,51 @@ contract LotteryVault is GelatoVRFConsumerBase, Ownable {
         
         drawInProgress = true;
         
-        // Add logging
         console.log("Initiating draw for lottery:", currentLotteryId);
         console.log("Total pool:", totalPool);
         console.log("Participant count:", lotteryParticipants[currentLotteryId].length);
+
+        // Generate random commitment
+        bytes32 userRandomNumber = keccak256(abi.encodePacked(
+            block.timestamp,
+            block.prevrandao,
+            msg.sender
+        ));
+
+        // Get fee for entropy request
+        uint128 requestFee = entropy.getFee(provider);
         
-        bytes memory data = abi.encode(currentLotteryId, totalPool);
-        bytes memory requestData = abi.encode(0, data);
-        console.log("Request data prepared");
-        
-        _requestRandomness(requestData);
-        console.log("Randomness requested");
+        // Request random number
+        uint64 sequenceNumber = entropy.requestWithCallback{value: requestFee}(
+            provider,
+            userRandomNumber
+        );
+
+        sequenceNumberToLotteryId[sequenceNumber] = currentLotteryId;
         
         emit DrawInitiated(currentLotteryId);
     }
 
-    function _fulfillRandomness(
-        uint256 randomness,
-        uint256 requestId,
-        bytes memory extraData
+    function entropyCallback(
+        uint64 sequenceNumber,
+        address,
+        bytes32 randomNumber
     ) internal override {
         console.log("Fulfilling randomness");
-        console.log("Randomness received:", randomness);
-        console.log("Request ID:", requestId);
         
-        (uint256 lotteryId, uint256 prizePool) = abi.decode(extraData, (uint256, uint256));
-        console.log("Decoded lottery ID:", lotteryId);
-        console.log("Decoded prize pool:", prizePool);
+        uint256 lotteryId = sequenceNumberToLotteryId[sequenceNumber];
+        console.log("Processing lottery ID:", lotteryId);
         
         uint256 participantCount = lotteryParticipants[lotteryId].length;
         if (participantCount == 0) revert VRFInvalidParticipantCount();
         
         console.log("Selecting winner from", participantCount, "participants");
-        uint256 winnerIndex = randomness % participantCount;
+        uint256 winnerIndex = uint256(randomNumber) % participantCount;
         address winner = lotteryParticipants[lotteryId][winnerIndex];
         console.log("Selected winner:", winner);
         
-        uint256 winnerFee = (prizePool * WINNER_FEE) / FEE_DENOMINATOR;
-        uint256 winnerPrize = prizePool - winnerFee;
+        uint256 winnerFee = (totalPool * WINNER_FEE) / FEE_DENOMINATOR;
+        uint256 winnerPrize = totalPool - winnerFee;
         console.log("Winner prize:", winnerPrize);
         console.log("Winner fee:", winnerFee);
 
@@ -296,14 +310,6 @@ contract LotteryVault is GelatoVRFConsumerBase, Ownable {
         participants = lotteryParticipants[lotteryId];
     }
 
-    // Add this function to expose the operator address
-    function getOperator() external view returns (address) {
-        return operator;
-    }
-
-    function _operator() internal view override returns (address) {
-        return operator;
-    }
 
     function withdrawExcessGas() external onlyOwner {
         uint256 balance = address(this).balance;
@@ -318,5 +324,10 @@ contract LotteryVault is GelatoVRFConsumerBase, Ownable {
         receiptToken = PrzHoney(_przHoney);
         PrzHoney(_przHoney).approve(address(rewardVault), type(uint256).max);
         emit PrzHoneySet(_przHoney);
+    }
+
+    // Required by IEntropyConsumer
+    function getEntropy() internal view override returns (address) {
+        return address(entropy);
     }
 } 

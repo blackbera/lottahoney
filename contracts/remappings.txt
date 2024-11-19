@@ -8,3 +8,4 @@ solady/=lib/contracts-monorepo/lib/solady/
 contracts-monorepo/=lib/contracts-monorepo/src/
 transient-goodies/=lib/contracts-monorepo/lib/transient-goodies/src/
 vrf-contracts/=lib/vrf-contracts/contracts/
+@pythnetwork/entropy-sdk-solidity/=node_modules/@pythnetwork/entropy-sdk-solidity
