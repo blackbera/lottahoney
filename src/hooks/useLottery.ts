@@ -10,10 +10,13 @@ import {
   import ERC20ABI from '@/abis/ERC20ABI'
   import { parseEther } from 'viem'
   import RewardVaultABI from '@/abis/RewardVaultABI'
+  import { useEffect } from 'react'
   
   export function useLottery() {
     const { address } = useAccount()
     const lotteryAddress = ADDRESSES.LOTTERY_VAULT_ADDRESS as `0x${string}`
+  
+    console.log('Lottery Vault Address:', lotteryAddress)
   
     // Read multiple lottery states at once with better error handling
     const { 
@@ -45,11 +48,10 @@ import {
         }
       ],
       query: {
-        // Add staleTime and refetchInterval for better data management
-        staleTime: 5_000, // Consider data fresh for 5 seconds
-        refetchInterval: 10_000, // Refetch every 10 seconds
-        retry: 2, // Retry failed requests twice
-        retryDelay: 1500 // Wait 1.5 seconds between retries
+        staleTime: 1_000,     
+        refetchInterval: 1_000,
+        retry: 2,
+        retryDelay: 1000
       }
     })
   
@@ -59,10 +61,10 @@ import {
       totalPool = BigInt(0),
       timeRemaining = BigInt(0),
       participants = []
-    ] = (lotteryData?.map(result => 
-      // Extract the result value if it's a success object
-      'result' in result ? result.result : result
-    ) || []) as [boolean, bigint, bigint, string[]]
+    ] = (lotteryData?.map(result => {
+      return 'result' in result ? result.result : result
+    }) || []) as [boolean, bigint, bigint, string[]]
+  
   
     // Purchase transaction handling
     const { 
@@ -84,6 +86,12 @@ import {
       timeout: 30_000
     })
   
+    useEffect(() => {
+      if (isConfirmed && hash) {
+        console.log('Transaction confirmed with hash:', hash)
+      }
+    }, [isConfirmed, hash])
+  
     const buyTickets = async (amount: number) => {
       if (!address) return;
       
@@ -104,17 +112,23 @@ import {
     };
   
     const startLottery = async () => {
-      if (!address) return;
+      if (!address) {
+        console.log('No wallet address found');
+        return;
+      }
       
       try {
-        const data = await writeContract({
+        console.log('Starting lottery transaction...');
+        const result = await writeContract({
           address: lotteryAddress,
           abi: LotteryVaultABI,
           functionName: 'startLottery',
         });
-  
+        console.log('Transaction hash:', result);
+
         await refetch();
-        return data;
+        console.log('State refetched after confirmation');
+        return result;
       } catch (error) {
         console.error('Error starting lottery:', error);
         throw error;
