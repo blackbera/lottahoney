@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { useAccount, useReadContract } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useLottery } from '@/hooks/useLottery';
 import { usePurchaseTicket } from '@/hooks/usePurchaseTicket';
-import { formatEther } from 'viem';
+import { formatEther, parseEther } from 'viem';
 import { useLotteryState } from '@/hooks/useLotteryState';
 import { useBGTPrice } from '@/hooks/useBGTPrice';
 import { ADDRESSES } from '@/config/addresses';
 import LotteryVaultABI from '@/abis/LotteryVaultABI';
+import HoneyABI from '@/abis/HoneyABI';
 
 
 interface EarningsTileProps {
@@ -93,14 +94,65 @@ export function HoneyLotteryTiles() {
   const {
     totalPool,
     participants,
-    buyTickets,
-    isLoading,
+    approveAndPurchase,
+    isApprovePending,
+    isPurchasePending,
     isReading,
     error,
   } = useLottery();
 
   const [ticketCount, setTicketCount] = useState<number>(1);
-  const showLoadingState = isLoading && !isReading;
+  const showLoadingState = (isApprovePending || isPurchasePending) && !isReading;
+
+  // Approval transaction
+  const { 
+    data: approvalHash,
+    isPending: isApprovalPending,
+    writeContract: writeApprove 
+  } = useWriteContract()
+
+  // Purchase transaction
+  const {
+    data: purchaseHash,
+    isPending: isLotteryPurchasePending,
+    writeContract: writePurchase
+  } = useWriteContract()
+
+  // Watch for transaction confirmations
+  const { isLoading: isApprovalConfirming, isSuccess: isApprovalConfirmed } = 
+    useWaitForTransactionReceipt({ hash: approvalHash })
+
+  const { isLoading: isPurchaseConfirming, isSuccess: isPurchaseConfirmed } = 
+    useWaitForTransactionReceipt({ hash: purchaseHash })
+
+  const [pendingAmount, setPendingAmount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isApprovalConfirmed && pendingAmount) {
+      writePurchase({
+        address: ADDRESSES.LOTTERY_VAULT_ADDRESS as `0x${string}`,
+        abi: LotteryVaultABI,
+        functionName: 'purchaseTicket',
+        args: [BigInt(pendingAmount)]
+      })
+      setPendingAmount(null)
+    }
+  }, [isApprovalConfirmed, pendingAmount, writePurchase])
+
+  const handlePurchase = async (amount: number) => {
+    try {
+      setPendingAmount(amount)
+      await writeApprove({
+        address: ADDRESSES.HONEY_ADDRESS as `0x${string}`,
+        abi: HoneyABI,
+        functionName: 'approve',
+        args: [ADDRESSES.LOTTERY_VAULT_ADDRESS, parseEther(amount.toString())]
+      })
+    } catch (error) {
+      console.error('Transaction failed:', error)
+      setPendingAmount(null)
+    }
+  }
 
   const renderActionButton = () => {
     if (!address) {
@@ -138,7 +190,7 @@ export function HoneyLotteryTiles() {
           </button>
         </div>
         <button
-          onClick={() => buyTickets(ticketCount)}
+          onClick={() => handlePurchase(ticketCount)}
           disabled={showLoadingState || !isActive}
           className={`w-full font-bold py-2 px-4 rounded-lg transition-all ${
             isActive 
@@ -147,7 +199,9 @@ export function HoneyLotteryTiles() {
           }`}
         >
           {showLoadingState 
-            ? 'Please wait...' 
+            ? isApprovePending 
+              ? 'Approving HONEY...'
+              : 'Purchasing...'
             : !isActive 
               ? 'Lottery Not Active'
               : 'Purchase Tickets'}
