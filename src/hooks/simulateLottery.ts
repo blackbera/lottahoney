@@ -9,9 +9,9 @@ import {
 
 import { generatePrivateKey, privateKeyToAccount  } from 'viem/accounts'
 import { berachainTestnetbArtio } from 'viem/chains'
-import HoneyABI from '../src/abis/HoneyABI'
-import LotteryVaultABI from '../src/abis/LotteryVaultABI'
-import { ADDRESSES } from '../src/config/addresses'
+import HoneyABI from '../abis/HoneyABI'
+import LotteryVaultABI from '../abis/LotteryVaultABI'
+import { ADDRESSES } from '../config/addresses'
 import { config } from 'dotenv'
 
 config()
@@ -107,7 +107,7 @@ async function enterLottery(
   console.log(`Purchased ${TICKETS_PER_WALLET} ticket(s). TX: ${purchaseTx}`)
 }
 
-async function main() {
+export const simulateLottery = async () => {
   try {
     // Setup
     const adminAccount = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`)
@@ -131,9 +131,6 @@ async function main() {
     console.log('\nSimulation complete! 🎉')
   } catch (error) {
     console.error('Error during simulation:', error)
-    process.exit(1)
+    throw error
   }
-}
-
-// Run the simulation
-main() 
+} 
