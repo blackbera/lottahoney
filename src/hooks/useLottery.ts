@@ -93,7 +93,6 @@ import {
           abi: LotteryVaultABI,
           functionName: 'purchaseTicket',
           args: [BigInt(amount)],
-          value: parseEther((0.01 * amount).toString())
         });
         
         await refetch();

@@ -78,8 +78,8 @@ export function usePurchaseTicket() {
         address: lotteryAddress,
         abi: LotteryVaultABI,
         functionName: 'purchaseTicket',
-        args: [ticketCount],
-      })
+        args: [BigInt(ticketCount)],
+        })
 
     } catch (error) {
       console.error('Error purchasing tickets:', error)
