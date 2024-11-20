@@ -1658,6 +1658,11 @@
   resolved "https://registry.npmjs.org/@pkgjs/parseargs/-/parseargs-0.11.0.tgz"
   integrity sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==
 
+"@pythnetwork/entropy-sdk-solidity@^1.5.0":
+  version "1.5.0"
+  resolved "https://registry.npmjs.org/@pythnetwork/entropy-sdk-solidity/-/entropy-sdk-solidity-1.5.0.tgz"
+  integrity sha512-ZZti5BLURe4w0HtCwy2qGJayOtAcWjjfpnUsar6fHZPG2SkC3jfj13m9WBJKLk87T1ZaSpazAdb22pm6MXG8qg==
+
 "@rainbow-me/rainbowkit@^2.2.0":
   version "2.2.0"
   resolved "https://registry.npmjs.org/@rainbow-me/rainbowkit/-/rainbowkit-2.2.0.tgz"

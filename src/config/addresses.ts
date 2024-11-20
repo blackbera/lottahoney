@@ -8,7 +8,7 @@ export const ADDRESSES = {
   HONEY_WHALE_ADDRESS: '0xCe67E15cbCb3486B29aD44486c5B5d32f361fdDc',
 
   // Our deployed contracts (these will be populated from .env)
-  LOTTERY_VAULT_ADDRESS: process.env.NEXT_PUBLIC_LOTTERY_VAULT_ADDRESS as string,
-  PRZ_HONEY_ADDRESS: process.env.NEXT_PUBLIC_PRZ_HONEY_ADDRESS as string,
-  REWARDS_VAULT_ADDRESS: process.env.NEXT_PUBLIC_REWARDS_VAULT_ADDRESS as string,
+  LOTTERY_VAULT_ADDRESS: process.env.LOTTERY_VAULT_ADDRESS as string,
+  PRZ_HONEY_ADDRESS: process.env.PRZ_HONEY_ADDRESS as string,
+  REWARDS_VAULT_ADDRESS: process.env.REWARDS_VAULT_ADDRESS as string,
 } as const; 

@@ -821,7 +821,14 @@ const LotteryVaultABI = [
     "type": "error",
     "name": "VRFRequestAlreadyPending",
     "inputs": []
+  },
+  {
+    "inputs": [{ name: "account", type: "address" }],
+    "name": "earned",
+    "outputs": [{ name: "", type: "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
   }
-]
+] as const;
 
-export default LotteryVaultABI
+export default LotteryVaultABI;

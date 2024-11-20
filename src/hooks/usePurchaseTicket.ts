@@ -89,7 +89,8 @@ export function usePurchaseTicket() {
 
   return {
     buyTickets,
-    isLoading: isApproving || isPurchasing || isApproveConfirming || isPurchaseConfirming || isReading,
+    isLoading: isApproving || isPurchasing || isApproveConfirming || isPurchaseConfirming,
+    isReading,
     error: approveError || purchaseError || readError
   }
 } 

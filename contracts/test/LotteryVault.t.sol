@@ -110,7 +110,6 @@ contract LotteryVaultTest is Test {
             address(paymentToken),
             owner,
             address(rewardsVault),
-            operator,
             ENTROPY_SERVICE,
             DEFAULT_PROVIDER
         );

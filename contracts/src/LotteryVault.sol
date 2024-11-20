@@ -9,85 +9,193 @@ import { IEntropy } from "@pythnetwork/entropy-sdk-solidity/IEntropy.sol";
 import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
 import { IBerachainRewardsVault } from "contracts-monorepo/pol/interfaces/IBerachainRewardsVault.sol";
 import { PrzHoney } from "./PrzHoney.sol";
-import {console} from "forge-std/console.sol";
+import { console } from "forge-std/console.sol";
 
-contract LotteryReceiptToken is ERC20 {
-    constructor() ERC20("przHoney", "przHoney") {}
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-
-    function burn(address from, uint256 amount) external {
-        _burn(from, amount);
-    }
-}
-
+/**
+ * @title LotteryVault
+ * @dev A lottery system using Pyth's Entropy for randomness and Berachain's reward system
+ * @author przhi.eth
+ * @notice This contract manages a lottery system where users can buy tickets with HONEY
+ * @custom:security-contact security@przhi.eth
+ */
 contract LotteryVault is IEntropyConsumer, Ownable {
     using SafeERC20 for IERC20;
 
-    // Events
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted when a user purchases lottery tickets
+    /// @param buyer Address of the ticket buyer
+    /// @param ticketId ID of the lottery
+    /// @param amount Number of tickets purchased
     event TicketPurchased(address indexed buyer, uint256 ticketId, uint256 amount);
+
+    /// @notice Emitted when a lottery winner is selected
+    /// @param winner Address of the winner
+    /// @param amount Prize amount won
     event LotteryWinner(address indexed winner, uint256 amount);
+
+    /// @notice Emitted when incentives are added to the rewards vault
+    /// @param amount Amount of incentives added
     event IncentiveAdded(uint256 amount);
+
+    /// @notice Emitted when a lottery draw is initiated
+    /// @param lotteryId ID of the lottery being drawn
     event DrawInitiated(uint256 lotteryId);
+
+    /// @notice Emitted when a new lottery starts
+    /// @param lotteryId ID of the new lottery
+    /// @param ticketPrice Price per ticket
+    /// @param endTime Timestamp when lottery ends
     event LotteryStarted(uint256 lotteryId, uint256 ticketPrice, uint256 endTime);
+
+    /// @notice Emitted when a winner claims their reward
+    /// @param winner Address of the winner claiming
+    /// @param amount Amount claimed
     event RewardClaimed(address indexed winner, uint256 amount);
+
+    /// @notice Emitted when receipt tokens are burned
+    /// @param user Address whose tokens were burned
+    /// @param amount Amount of tokens burned
     event ReceiptTokensBurned(address indexed user, uint256 amount);
+
+    /// @notice Emitted when a withdrawal fails
+    /// @param participant Address of the failed withdrawal
+    /// @param amount Amount that failed to withdraw
     event WithdrawalFailed(address indexed participant, uint256 amount);
+
+    /// @notice Emitted when PrzHoney token address is set
+    /// @param przHoney Address of the PrzHoney token
     event PrzHoneySet(address przHoney);
 
-    // Errors
+    /*//////////////////////////////////////////////////////////////
+                                 ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Thrown when an invalid amount is provided
     error InvalidAmount();
+    /// @notice Thrown when trying to draw before lottery ends
     error LotteryNotEnded();
+    /// @notice Thrown when lottery has already ended
     error LotteryEnded();
+    /// @notice Thrown when there are no participants
     error NoParticipants();
+    /// @notice Thrown when a draw is already in progress
     error DrawInProgress();
+    /// @notice Thrown when no lottery is active
     error NoActiveLottery();
+    /// @notice Thrown when trying to start an already active lottery
     error LotteryAlreadyActive();
+    /// @notice Thrown when an invalid ticket price is set
     error InvalidTicketPrice();
+    /// @notice Thrown when an invalid duration is set
     error InvalidDuration();
+    /// @notice Thrown when non-winner tries to claim
     error NotWinner();
+    /// @notice Thrown when gas reserves are too low
     error InsufficientGasReserves();
+    /// @notice Thrown when staking is not allowed
     error StakingNotAllowed();
+    /// @notice Thrown when VRF request is already pending
     error VRFRequestAlreadyPending();
+    /// @notice Thrown when round ID is invalid
+    /// @param roundId The invalid round ID
     error VRFInvalidRoundId(uint256 roundId);
+    /// @notice Thrown when request data is invalid
     error VRFInvalidRequestData();
+    /// @notice Thrown when randomness is invalid
     error VRFInvalidRandomness();
+    /// @notice Thrown when participant count is invalid
     error VRFInvalidParticipantCount();
 
-    // Constants
-    uint256 private constant PURCHASE_FEE = 100; // 1%
-    uint256 private constant WINNER_FEE = 300; // 3%
+    /*//////////////////////////////////////////////////////////////
+                                CONSTANTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Purchase fee percentage (1%)
+    uint256 private constant PURCHASE_FEE = 100;
+
+    /// @notice Winner fee percentage (3%)
+    uint256 private constant WINNER_FEE = 300;
+
+    /// @notice Fee denominator for percentage calculations
     uint256 private constant FEE_DENOMINATOR = 10000;
-    uint256 private constant MIN_GAS_RESERVE = 1 ether; // Minimum ETH to keep for gas
 
-    // State variables
+    /// @notice Minimum ETH to keep for gas fees
+    uint256 private constant MIN_GAS_RESERVE = 1 ether;
+
+    /*//////////////////////////////////////////////////////////////
+                            STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Token used for purchasing tickets (HONEY)
     IERC20 public paymentToken;
-    PrzHoney public receiptToken;
-    IBerachainRewardsVault public rewardVault;
-    
-    uint256 public lotteryEndTime;
-    uint256 public currentLotteryId;
-    uint256 public ticketPrice;
-    uint256 public totalPool;
-    
-    bool public drawInProgress;
-    bool public lotteryActive;
-    
-    // Mappings
-    mapping(uint256 => address[]) public lotteryParticipants;
-    mapping(address => uint256) public userTicketCount;
-    mapping(uint256 => address) public lotteryWinners;
-    mapping(uint256 => uint256) public lotteryPrizes;
-    mapping(uint256 => bool) public prizesClaimed;
-    mapping(address => uint256) public userReceiptTokenBalance;
 
-    // Pyth-specific state variables
+    /// @notice Receipt token for tracking participation (przHONEY)
+    PrzHoney public receiptToken;
+
+    /// @notice Berachain rewards vault for staking
+    IBerachainRewardsVault public rewardVault;
+
+    /// @notice Pyth entropy service for randomness
     IEntropy public entropy;
+
+    /// @notice Pyth entropy provider address
     address public provider;
+
+    /// @notice Current lottery end timestamp
+    uint256 public lotteryEndTime;
+
+    /// @notice Current lottery ID
+    uint256 public currentLotteryId;
+
+    /// @notice Price per ticket in HONEY
+    uint256 public ticketPrice;
+
+    /// @notice Total pool amount for current lottery
+    uint256 public totalPool;
+
+    /// @notice Whether a draw is currently in progress
+    bool public drawInProgress;
+
+    /// @notice Whether a lottery is currently active
+    bool public lotteryActive;
+
+    /*//////////////////////////////////////////////////////////////
+                                MAPPINGS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Mapping of lottery ID to participant addresses
+    mapping(uint256 => address[]) public lotteryParticipants;
+
+    /// @notice Mapping of user address to ticket count
+    mapping(address => uint256) public userTicketCount;
+
+    /// @notice Mapping of lottery ID to winner address
+    mapping(uint256 => address) public lotteryWinners;
+
+    /// @notice Mapping of lottery ID to prize amount
+    mapping(uint256 => uint256) public lotteryPrizes;
+
+    /// @notice Mapping of lottery ID to prize claimed status
+    mapping(uint256 => bool) public prizesClaimed;
+
+    /// @notice Mapping of sequence number to lottery ID for Pyth callbacks
     mapping(uint64 => uint256) public sequenceNumberToLotteryId;
 
+    /*//////////////////////////////////////////////////////////////
+                               CONSTRUCTOR
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initializes the lottery vault
+     * @param _paymentToken Address of the HONEY token
+     * @param _owner Address of the contract owner
+     * @param _rewardVault Address of the Berachain rewards vault
+     * @param _entropy Address of the Pyth entropy service
+     * @param _provider Address of the Pyth entropy provider
+     */
     constructor(
         address _paymentToken,
         address _owner,
@@ -97,14 +205,22 @@ contract LotteryVault is IEntropyConsumer, Ownable {
     ) Ownable(_owner) {
         paymentToken = IERC20(_paymentToken);
         rewardVault = IBerachainRewardsVault(_rewardVault);
-        currentLotteryId = 1;
         entropy = IEntropy(_entropy);
         provider = _provider;
+        currentLotteryId = 1;
     }
 
-    // Allow contract to receive ETH
+    /*//////////////////////////////////////////////////////////////
+                            EXTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Allows contract to receive ETH
     receive() external payable {}
 
+    /**
+     * @notice Claims reward for a winning lottery ticket
+     * @param lotteryId ID of the lottery to claim from
+     */
     function claimReward(uint256 lotteryId) external {
         address winner = lotteryWinners[lotteryId];
         require(winner != address(0), "No winner for this lottery");
@@ -116,70 +232,46 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         prizesClaimed[lotteryId] = true;
         paymentToken.safeTransfer(winner, prize);
 
-        // Burn receipt tokens from winner
         uint256 winnerTickets = userTicketCount[winner];
         receiptToken.burn(winner, winnerTickets);
 
         emit RewardClaimed(winner, prize);
         emit ReceiptTokensBurned(winner, winnerTickets);
 
-        // Reset lottery
         _startNewLottery();
     }
 
-    function _startNewLottery() internal {
-        totalPool = 0;
-        currentLotteryId += 1;
-        lotteryEndTime = block.timestamp + 1 days;
-        drawInProgress = false;
-        lotteryActive = true;
+    /**
+     * @notice Purchases lottery tickets
+     * @param amount Number of tickets to purchase
+     */
+    function purchaseTicket(uint256 amount) external {
+        if (!lotteryActive) revert NoActiveLottery();
+        if (block.timestamp >= lotteryEndTime) revert LotteryEnded();
+        if (amount == 0) revert InvalidAmount();
+
+        uint256 totalCost = amount * ticketPrice;
+        uint256 purchaseFee = (totalCost * PURCHASE_FEE) / FEE_DENOMINATOR;
+        
+        paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
+        totalPool += (totalCost - purchaseFee);
+        
+        receiptToken.mint(address(this), amount);
+        receiptToken.approve(address(rewardVault), amount);
+        rewardVault.delegateStake(msg.sender, amount);
+        
+        paymentToken.approve(address(rewardVault), purchaseFee);
+        rewardVault.addIncentive(address(paymentToken), purchaseFee, 1);
+
+        lotteryParticipants[currentLotteryId].push(msg.sender);
+        userTicketCount[msg.sender] += amount;
+
+        emit TicketPurchased(msg.sender, currentLotteryId, amount);
     }
 
-    function purchaseTicket(uint256 amount) external {
-    // Check lottery state
-    if (!lotteryActive) revert NoActiveLottery();
-    if (block.timestamp >= lotteryEndTime) revert LotteryEnded();
-    if (amount == 0) revert InvalidAmount();
-
-    uint256 totalCost = amount * ticketPrice;
-    /*
-        Purchase Fee Calculation:
-        =========================
-        fee = (totalCost * PURCHASE_FEE) / FEE_DENOMINATOR
-        where:
-        - PURCHASE_FEE = 100 (1%)
-        - FEE_DENOMINATOR = 10000
-        
-        Example for 1 BERA purchase:
-            fee = (1 BERA * 100) / 10000
-            fee = 0.01 BERA (1%)
-        
-        Final amount to pool = totalCost - fee
-    */
-    uint256 purchaseFee = (totalCost * PURCHASE_FEE) / FEE_DENOMINATOR;
-    
-    // Transfer total payment from user to vault
-    paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
-    // Add amount minus fee to prize pool
-    totalPool += (totalCost - purchaseFee);
-    
-    // Mint receipt tokens to user for tracking participation
-    receiptToken.mint(address(this), amount);
-    receiptToken.approve(address(rewardVault), amount);
-    rewardVault.delegateStake(msg.sender, amount);
-
-    
-    // Add purchase fee as incentive to rewards vault
-    paymentToken.approve(address(rewardVault), purchaseFee);
-    rewardVault.addIncentive(address(paymentToken), purchaseFee, 1);
-
-    // Record participation for lottery drawing
-    lotteryParticipants[currentLotteryId].push(msg.sender);
-    userTicketCount[msg.sender] += amount;
-
-    emit TicketPurchased(msg.sender, currentLotteryId, amount);
-}
-
+    /**
+     * @notice Starts a new lottery
+     */
     function startLottery() external {
         if (lotteryActive) revert LotteryAlreadyActive();
 
@@ -190,6 +282,9 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         emit LotteryStarted(currentLotteryId, ticketPrice, lotteryEndTime);
     }
 
+    /**
+     * @notice Initiates the lottery draw using Pyth entropy
+     */
     function initiateDraw() external {
         if (!lotteryActive) revert NoActiveLottery();
         if (block.timestamp < lotteryEndTime) revert LotteryNotEnded();
@@ -198,21 +293,13 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         
         drawInProgress = true;
         
-        console.log("Initiating draw for lottery:", currentLotteryId);
-        console.log("Total pool:", totalPool);
-        console.log("Participant count:", lotteryParticipants[currentLotteryId].length);
-
-        // Generate random commitment
         bytes32 userRandomNumber = keccak256(abi.encodePacked(
             block.timestamp,
             block.prevrandao,
             msg.sender
         ));
 
-        // Get fee for entropy request
         uint128 requestFee = entropy.getFee(provider);
-        
-        // Request random number
         uint64 sequenceNumber = entropy.requestWithCallback{value: requestFee}(
             provider,
             userRandomNumber
@@ -223,83 +310,34 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         emit DrawInitiated(currentLotteryId);
     }
 
-    function entropyCallback(
-        uint64 sequenceNumber,
-        address,
-        bytes32 randomNumber
-    ) internal override {
-        console.log("Fulfilling randomness");
-        
-        uint256 lotteryId = sequenceNumberToLotteryId[sequenceNumber];
-        console.log("Processing lottery ID:", lotteryId);
-        
-        uint256 participantCount = lotteryParticipants[lotteryId].length;
-        if (participantCount == 0) revert VRFInvalidParticipantCount();
-        
-        console.log("Selecting winner from", participantCount, "participants");
-        uint256 winnerIndex = uint256(randomNumber) % participantCount;
-        address winner = lotteryParticipants[lotteryId][winnerIndex];
-        console.log("Selected winner:", winner);
-        
-        uint256 winnerFee = (totalPool * WINNER_FEE) / FEE_DENOMINATOR;
-        uint256 winnerPrize = totalPool - winnerFee;
-        console.log("Winner prize:", winnerPrize);
-        console.log("Winner fee:", winnerFee);
+    /*//////////////////////////////////////////////////////////////
+                            VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
-        // Exit all participants from vault and burn their receipt tokens
-        for (uint256 i = 0; i < participantCount; i++) {
-            address participant = lotteryParticipants[lotteryId][i];
-            uint256 participantStake = userTicketCount[participant];
-            
-            if (participantStake > 0) {
-                console.log("Processing participant:", participant);
-                console.log("Stake amount:", participantStake);
-                
-                try rewardVault.delegateWithdraw(participant, participantStake) {
-                    receiptToken.burn(participant, participantStake);
-                    userTicketCount[participant] = 0;
-                    emit ReceiptTokensBurned(participant, participantStake);
-                    console.log("Successfully processed participant");
-                } catch {
-                    console.log("Failed to process participant");
-                    emit WithdrawalFailed(participant, participantStake);
-                }
-            }
-        }
-
-        // Transfer prize to winner
-        console.log("Transferring prize to winner");
-        paymentToken.safeTransfer(winner, winnerPrize);
-
-        // Add winner fee as incentive
-        console.log("Adding winner fee as incentive");
-        paymentToken.approve(address(rewardVault), winnerFee);
-        rewardVault.addIncentive(address(paymentToken), winnerFee, 1);
-
-        lotteryWinners[lotteryId] = winner;
-        lotteryPrizes[lotteryId] = winnerPrize;
-
-        emit LotteryWinner(winner, winnerPrize);
-        emit IncentiveAdded(winnerFee);
-
-        // Reset lottery state
-        console.log("Resetting lottery state");
-        totalPool = 0;
-        currentLotteryId += 1;
-        lotteryEndTime = 0;
-        drawInProgress = false;
-        lotteryActive = false;
-    }
-
+    /**
+     * @notice Gets current lottery participants
+     * @return Array of participant addresses
+     */
     function getCurrentParticipants() external view returns (address[] memory) {
         return lotteryParticipants[currentLotteryId];
     }
 
+    /**
+     * @notice Gets remaining time in current lottery
+     * @return Time remaining in seconds
+     */
     function getTimeRemaining() external view returns (uint256) {
         if (block.timestamp >= lotteryEndTime) return 0;
         return lotteryEndTime - block.timestamp;
     }
 
+    /**
+     * @notice Gets information about a specific lottery
+     * @param lotteryId ID of the lottery
+     * @return winner Address of the winner
+     * @return prize Amount won
+     * @return participants Array of participant addresses
+     */
     function getLotteryInfo(uint256 lotteryId) external view returns (
         address winner,
         uint256 prize,
@@ -310,7 +348,14 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         participants = lotteryParticipants[lotteryId];
     }
 
+    /*//////////////////////////////////////////////////////////////
+                            OWNER FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Withdraws excess gas from contract
+     * @dev Only callable by owner
+     */
     function withdrawExcessGas() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > MIN_GAS_RESERVE, "No excess gas to withdraw");
@@ -319,6 +364,11 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         require(success, "Gas withdrawal failed");
     }
 
+    /**
+     * @notice Sets the PrzHoney token address
+     * @dev Only callable by owner
+     * @param _przHoney Address of the PrzHoney token
+     */
     function setPrzHoney(address _przHoney) external onlyOwner {
         require(_przHoney != address(0), "Zero address not allowed");
         receiptToken = PrzHoney(_przHoney);
@@ -326,7 +376,78 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         emit PrzHoneySet(_przHoney);
     }
 
-    // Required by IEntropyConsumer
+    /*//////////////////////////////////////////////////////////////
+                            INTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Starts a new lottery round
+     */
+    function _startNewLottery() internal {
+        totalPool = 0;
+        currentLotteryId += 1;
+        lotteryEndTime = block.timestamp + 1 days;
+        drawInProgress = false;
+        lotteryActive = true;
+    }
+
+    /**
+     * @notice Callback function for Pyth entropy
+     * @param sequenceNumber Sequence number of the request
+     * @param randomNumber Random number provided by Pyth
+     */
+    function entropyCallback(
+        uint64 sequenceNumber,
+        address,
+        bytes32 randomNumber
+    ) internal override {
+        uint256 lotteryId = sequenceNumberToLotteryId[sequenceNumber];
+        uint256 participantCount = lotteryParticipants[lotteryId].length;
+        if (participantCount == 0) revert VRFInvalidParticipantCount();
+        
+        uint256 winnerIndex = uint256(randomNumber) % participantCount;
+        address winner = lotteryParticipants[lotteryId][winnerIndex];
+        
+        uint256 winnerFee = (totalPool * WINNER_FEE) / FEE_DENOMINATOR;
+        uint256 winnerPrize = totalPool - winnerFee;
+
+        for (uint256 i = 0; i < participantCount; i++) {
+            address participant = lotteryParticipants[lotteryId][i];
+            uint256 participantStake = userTicketCount[participant];
+            
+            if (participantStake > 0) {
+                try rewardVault.delegateWithdraw(participant, participantStake) {
+                    receiptToken.burn(participant, participantStake);
+                    userTicketCount[participant] = 0;
+                    emit ReceiptTokensBurned(participant, participantStake);
+                } catch {
+                    emit WithdrawalFailed(participant, participantStake);
+                }
+            }
+        }
+
+        paymentToken.safeTransfer(winner, winnerPrize);
+
+        paymentToken.approve(address(rewardVault), winnerFee);
+        rewardVault.addIncentive(address(paymentToken), winnerFee, 1);
+
+        lotteryWinners[lotteryId] = winner;
+        lotteryPrizes[lotteryId] = winnerPrize;
+
+        emit LotteryWinner(winner, winnerPrize);
+        emit IncentiveAdded(winnerFee);
+
+        totalPool = 0;
+        currentLotteryId += 1;
+        lotteryEndTime = 0;
+        drawInProgress = false;
+        lotteryActive = false;
+    }
+
+    /**
+     * @notice Required by IEntropyConsumer
+     * @return Address of the entropy service
+     */
     function getEntropy() internal view override returns (address) {
         return address(entropy);
     }

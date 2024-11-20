@@ -74,7 +74,6 @@ contract LocalSetup is Script {
             HONEY,
             owner,
             address(rewardsVault),
-            operator,
             ENTROPY_SERVICE,
             DEFAULT_PROVIDER
         );
