@@ -69,6 +69,10 @@ contract LotteryVault is IEntropyConsumer, Ownable {
     /// @param przHoney Address of the PrzHoney token
     event PrzHoneySet(address przHoney);
 
+    /// @notice Emitted when a lottery is stopped
+    /// @param lotteryId ID of the stopped lottery
+    event LotteryStopped(uint256 indexed lotteryId);
+
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -161,6 +165,9 @@ contract LotteryVault is IEntropyConsumer, Ownable {
 
     /// @notice Whether a lottery is currently active
     bool public lotteryActive;
+
+    /// @notice Accumulated fees from purchases and winners
+    uint256 public accumulatedFees;
 
     /*//////////////////////////////////////////////////////////////
                                 MAPPINGS
@@ -255,14 +262,12 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         
         paymentToken.safeTransferFrom(msg.sender, address(this), totalCost);
         totalPool += (totalCost - purchaseFee);
+        accumulatedFees += purchaseFee;
         
         receiptToken.mint(address(this), amount);
         receiptToken.approve(address(rewardVault), amount);
         rewardVault.delegateStake(msg.sender, amount);
         
-        paymentToken.approve(address(rewardVault), purchaseFee);
-        rewardVault.addIncentive(address(paymentToken), purchaseFee, 1);
-
         lotteryParticipants[currentLotteryId].push(msg.sender);
         userTicketCount[msg.sender] += amount;
 
@@ -270,16 +275,44 @@ contract LotteryVault is IEntropyConsumer, Ownable {
     }
 
     /**
-     * @notice Starts a new lottery
+     * @notice Starts a new lottery round
+     * @dev Anyone can call this, but only when no lottery is active
      */
     function startLottery() external {
         if (lotteryActive) revert LotteryAlreadyActive();
 
         ticketPrice = 1 ether;
-        lotteryEndTime = block.timestamp + 1 days;
+        lotteryEndTime = block.timestamp + 10 minutes;
         lotteryActive = true;
 
         emit LotteryStarted(currentLotteryId, ticketPrice, lotteryEndTime);
+    }
+
+    /**
+     * @notice Force starts a new lottery round, resetting all state
+     * @dev Only callable by owner, used to unstick lottery in weird states
+     */
+    function forceNewLottery() external onlyOwner {
+        totalPool = 0;
+        currentLotteryId += 1;
+        lotteryEndTime = block.timestamp + 10 minutes;
+        drawInProgress = false;
+        lotteryActive = true;
+
+        emit LotteryStarted(currentLotteryId, ticketPrice, lotteryEndTime);
+    }
+
+    /**
+     * @notice Stops the current lottery
+     * @dev Only callable by owner, used to stop lottery in weird states
+     */
+    function stopLottery() external onlyOwner {
+        lotteryActive = false;
+        drawInProgress = false;
+        totalPool = 0;
+        lotteryEndTime = 0;
+        
+        emit LotteryStopped(currentLotteryId);
     }
 
     /**
@@ -308,6 +341,23 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         sequenceNumberToLotteryId[sequenceNumber] = currentLotteryId;
         
         emit DrawInitiated(currentLotteryId);
+    }
+
+    /**
+     * @notice Adds accumulated fees as incentives to the reward vault
+     * @dev Only callable by owner
+     * @param amount Amount of fees to add as incentives (0 for all)
+     */
+    function addAccumulatedFeesAsIncentives(uint256 amount) external onlyOwner {
+        uint256 amountToAdd = amount == 0 ? accumulatedFees : amount;
+        if (amountToAdd > accumulatedFees) revert InvalidAmount();
+        if (amountToAdd == 0) revert InvalidAmount();
+
+        accumulatedFees -= amountToAdd;
+        paymentToken.approve(address(rewardVault), amountToAdd);
+        rewardVault.addIncentive(address(paymentToken), amountToAdd, 1);
+
+        emit IncentiveAdded(amountToAdd);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -411,6 +461,7 @@ contract LotteryVault is IEntropyConsumer, Ownable {
         uint256 winnerFee = (totalPool * WINNER_FEE) / FEE_DENOMINATOR;
         uint256 winnerPrize = totalPool - winnerFee;
 
+        // Handle participant withdrawals
         for (uint256 i = 0; i < participantCount; i++) {
             address participant = lotteryParticipants[lotteryId][i];
             uint256 participantStake = userTicketCount[participant];
@@ -426,17 +477,19 @@ contract LotteryVault is IEntropyConsumer, Ownable {
             }
         }
 
+        // Transfer prize to winner
         paymentToken.safeTransfer(winner, winnerPrize);
 
-        paymentToken.approve(address(rewardVault), winnerFee);
-        rewardVault.addIncentive(address(paymentToken), winnerFee, 1);
+        // Add winner fee to accumulated fees instead of immediate incentive
+        accumulatedFees += winnerFee;
 
         lotteryWinners[lotteryId] = winner;
         lotteryPrizes[lotteryId] = winnerPrize;
 
         emit LotteryWinner(winner, winnerPrize);
-        emit IncentiveAdded(winnerFee);
+        // Remove the IncentiveAdded event since we're just accumulating fees
 
+        // Reset lottery state
         totalPool = 0;
         currentLotteryId += 1;
         lotteryEndTime = 0;

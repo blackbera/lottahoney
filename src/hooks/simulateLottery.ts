@@ -111,6 +111,7 @@ export const simulateLottery = async () => {
   try {
     // Setup
     const adminAccount = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`)
+    console.log(`Admin account: ${adminAccount.address}`)
     const client = await setupClient()
     
     // Generate wallets
